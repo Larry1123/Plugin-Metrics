@@ -32,22 +32,11 @@ import net.canarymod.config.Configuration;
 import net.canarymod.plugin.Plugin;
 import net.visualillusionsent.utils.PropertiesFile;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.io.UnsupportedEncodingException;
-import java.lang.reflect.Method;
+import java.io.*;
 import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLEncoder;
-import java.util.List;
-import java.util.Properties;
 import java.util.UUID;
 import java.util.zip.GZIPOutputStream;
 
@@ -268,10 +257,10 @@ public class MetricsLite {
      * @throws java.io.IOException
      */
     public void enable() throws IOException {
-            // Enable Task, if it is not running
-            if (thread == null) {
-                start();
-            }
+        // Enable Task, if it is not running
+        if (thread == null) {
+            start();
+        }
     }
 
     /**
@@ -280,12 +269,12 @@ public class MetricsLite {
      * @throws java.io.IOException
      */
     public void disable() throws IOException {
-            // Disable Task, if it is running
-            if (thread != null) {
-                thread.interrupt();
-                thread = null;
-            }
+        // Disable Task, if it is running
+        if (thread != null) {
+            thread.interrupt();
+            thread = null;
         }
+    }
 
     /**
      * Gets the File object of the config file that should be used to store data such as the GUID and opt-out status
