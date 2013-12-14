@@ -36,7 +36,6 @@
     <modules>
         <module>mods/bukkit</module>
         <module>mods/bungee</module>
-        <module>mods/spout</module>
         <module>mods/forge</module>
         <module>mods/canary</module>
         <module>mods/canaryclassic</module>
@@ -55,9 +54,9 @@
             </plugin>
         </plugins>
     </build>
-
     <distributionManagement>
         <repository>
+
             <id>mcstats.releases</id>
             <name>mcstats.org releases</name>
             <url>http://repo.mcstats.org/content/repositories/releases/</url>
