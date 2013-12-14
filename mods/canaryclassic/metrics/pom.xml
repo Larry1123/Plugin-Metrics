@@ -2,12 +2,12 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.mcstats.canaryR</groupId>
+    <groupId>org.mcstats.canaryclassic</groupId>
     <artifactId>metrics</artifactId>
     <version>R8-SNAPSHOT</version>
     <packaging>jar</packaging>
     <url>mcstats.org</url>
-    <name>Metrics (Canary Recode)</name>
+    <name>Metrics (Canary Classic)</name>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -23,8 +23,8 @@
     <dependencies>
         <dependency>
             <groupId>net.canarymod</groupId>
-            <artifactId>CanaryLib</artifactId>
-            <version>1.0-RC-4-SNAPSHOT</version>
+            <artifactId>canarymod</artifactId>
+            <version>5.5.11-SNAPSHOT</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>

@@ -27,28 +27,18 @@
  */
 package org.mcstats;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.io.UnsupportedEncodingException;
-import java.lang.reflect.Method;
+import net.canarymod.Canary;
+import net.canarymod.config.Configuration;
+import net.canarymod.plugin.Plugin;
+import net.visualillusionsent.utils.PropertiesFile;
+import net.visualillusionsent.utils.UtilityException;
+
+import java.io.*;
 import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLEncoder;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Properties;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.zip.GZIPOutputStream;
 
 public class Metrics {
@@ -74,9 +64,20 @@ public class Metrics {
     private static final int PING_INTERVAL = 15;
 
     /**
-     * Debug mode
+     * Config for Server settings
      */
-    private final boolean debug;
+    private static final PropertiesFile serverConfig = new PropertiesFile("config" + File.separatorChar + "Metrics" + File.separatorChar + "Metrics.cfg");
+
+    static {
+        serverConfig.getString("guid", UUID.randomUUID().toString());
+        serverConfig.getBoolean("opt-out", false);
+        serverConfig.setComments("opt-out", "Set true to stop all Metrics reporting for this server");
+        serverConfig.getBoolean("debug", false);
+        serverConfig.setComments("debug", "Set true to enable Debuging for all reporting on this server");
+        serverConfig.clearHeader();
+        serverConfig.addHeaderLines("Metrics Server Config", "Effects all Metrics loggers");
+        serverConfig.save();
+    }
 
     /**
      * All of the custom graphs to submit to metrics
@@ -85,8 +86,14 @@ public class Metrics {
 
     /**
      * The plugin configuration file
+     * Holds optOut info and debug info
      */
-    private final Properties properties = new Properties();
+    private final PropertiesFile properties;
+
+    /**
+     * The Plugin object
+     */
+    private final Plugin plugin;
 
     /**
      * The plugin's name
@@ -99,16 +106,6 @@ public class Metrics {
     private final String pluginVersion;
 
     /**
-     * The plugin configuration file
-     */
-    private final File configurationFile;
-
-    /**
-     * Unique server id
-     */
-    private final String guid;
-
-    /**
      * Lock for synchronization
      */
     private final Object optOutLock = new Object();
@@ -118,134 +115,56 @@ public class Metrics {
      */
     private Thread thread = null;
 
-    /**
-     * The etc instance
-     */
-    private Object etc = null;
+    public String getGUID() {
+        serverConfig.reload();
+        try {
+            return serverConfig.getString("guid");
+        } catch (UtilityException e) {
+            if (isDebug()) {
+                Canary.logStacktrace(e.getMessage(), e);
+            }
+            serverConfig.getString("guid", UUID.randomUUID().toString());
+            serverConfig.save();
+            return serverConfig.getString("guid");
+        }
+    }
 
-    /**
-     * The server instance
-     */
-    private Object server = null;
-
-    /**
-     * etc.getInstance().isCrow()
-     */
-    private Method isCrow = null;
-
-    /**
-     * etc.getInstance().getVersionStr()
-     */
-    private Method getVersionStr = null;
-
-    /**
-     * etc.getServer().getMCVersion()
-     */
-    private Method getMCVersion = null;
-
-    /**
-     * etc.getServer().getPlayerList()
-     */
-    private Method getPlayerList = null;
-
-    public Metrics(String pluginName, String pluginVersion) throws IOException {
-        if (pluginName == null || pluginVersion == null) {
+    public Metrics(Plugin plugin) throws IOException {
+        if (plugin == null) {
             throw new IllegalArgumentException("Plugin cannot be null");
         }
 
-        this.pluginName = pluginName;
-        this.pluginVersion = pluginVersion;
+        this.plugin = plugin;
+        pluginName = plugin.getName();
+        pluginVersion = plugin.getVersion();
 
-        configurationFile = getConfigFile();
+        properties = getConfigFile();
 
-        if (!configurationFile.exists()) {
-            if (configurationFile.getPath().contains("/") || configurationFile.getPath().contains("\\")) {
-                File parent = new File(configurationFile.getParent());
-                if (!parent.exists()) {
-                    parent.mkdir();
-                }
-            }
-
-            configurationFile.createNewFile(); // config file
-            properties.put("opt-out", "false");
-            properties.put("guid", UUID.randomUUID().toString());
-            properties.put("debug", "false");
-            properties.store(new FileOutputStream(configurationFile), "http://mcstats.org");
-        } else {
-            properties.load(new FileInputStream(configurationFile));
-        }
-
-        guid = properties.getProperty("guid");
-        debug = Boolean.parseBoolean(properties.getProperty("debug"));
-
-        // load Canary related items
-        try {
-            Class<?> etcClazz = Class.forName("etc");
-            Method method = etcClazz.getMethod("getInstance");
-            etc = method.invoke(null);
-            method = etcClazz.getMethod("getServer");
-            server = method.invoke(null);
-
-            isCrow = etcClazz.getDeclaredMethod("isCrow");
-            getVersionStr = etcClazz.getDeclaredMethod("getVersionStr");
-            getMCVersion = server.getClass().getDeclaredMethod("getMCVersion");
-            getPlayerList = server.getClass().getDeclaredMethod("getPlayerList");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    /**
-     * Call a method on the etc instance and ignore any thrown exceptions
-     *
-     * @param method
-     * @return
-     */
-    private String callEtc(Method method) {
-        try {
-            return (String) method.invoke(etc);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * Call a method on the server instance and ignore any thrown exceptions
-     *
-     * @param method
-     * @return
-     */
-    private String callServer(Method method) {
-        try {
-            return (String) method.invoke(server);
-        } catch (Exception e) {
-            return null;
-        }
+        properties.getBoolean("opt-out", false);
+        properties.setComments("opt-out", "Set true to stop Metrics from reporting for " + pluginName);
+        properties.getBoolean("debug", false);
+        properties.setComments("debug", "Set true to enable Debuging for reporting on " + pluginName);
+        properties.clearHeader();
+        properties.addHeaderLines("Metrics Plugin Config", "Effects Metrics logging for " + pluginName + " only");
+        properties.save();
     }
 
     /**
      * Get the full server version
      *
-     * @return
+     * @return Version of CanaryMod with MC Version
      */
     public String getFullServerVersion() {
-        return (Boolean.parseBoolean(callEtc(isCrow)) ? "Crow" : "Canary") + " " + callEtc(getVersionStr) + " (MC: " + callServer(getMCVersion) + ")";
+        return Canary.getServer().getCanaryModVersion() + " (MC: " + Canary.getServer().getServerVersion() + ")";
     }
 
     /**
      * Get the amount of players online
      *
-     * @return
+     * @return How many players are currently online
      */
     public int getPlayersOnline() {
-        List playerList = null;
-        try {
-            playerList = (List) getPlayerList.invoke(server);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
-        return playerList != null ? playerList.size() : 0;
+        return Canary.getServer().getNumPlayersOnline();
     }
 
     /**
@@ -337,7 +256,7 @@ public class Metrics {
                                 firstPost = false;
                                 nextPost = System.currentTimeMillis() + (PING_INTERVAL * 60 * 1000);
                             } catch (IOException e) {
-                                if (debug) {
+                                if (isDebug()) {
                                     System.out.println("[Metrics] " + e.getMessage());
                                 }
                             }
@@ -345,7 +264,7 @@ public class Metrics {
 
                         try {
                             Thread.sleep(100L);
-                        } catch (InterruptedException e) {
+                        } catch (InterruptedException ignored) {
                         }
                     }
                 }
@@ -363,17 +282,43 @@ public class Metrics {
      */
     public boolean isOptOut() {
         synchronized (optOutLock) {
-            try {
-                // Reload the metrics file
-                properties.load(new FileInputStream(configurationFile));
-            } catch (IOException ex) {
-                if (debug) {
-                    System.out.println("[Metrics] " + ex.getMessage());
-                }
+            serverConfig.reload();
+            if (serverConfig.getBoolean("opt-out", false)) {
                 return true;
             }
+            getConfigFile().reload();
+            try {
+                return getConfigFile().getBoolean("opt-out");
+            } catch (UtilityException e) {
+                if (isDebug()) {
+                    Canary.logStacktrace(e.getMessage(), e);
+                }
+                getConfigFile().getBoolean("opt-out", false);
+                serverConfig.setComments("opt-out", "Set true to stop all Metrics reporting for this server");
+                getConfigFile().save();
+                return getConfigFile().getBoolean("opt-out");
+            }
+        }
+    }
 
-            return Boolean.parseBoolean(properties.getProperty("opt-out"));
+    /**
+     * Checks to see if Debuging is on for this plugin or for the whole server
+     *
+     * @return true if metrics should be running debug code
+     */
+    public boolean isDebug() {
+        serverConfig.reload();
+        if (serverConfig.getBoolean("debug", false)) {
+            return true;
+        }
+        getConfigFile().reload();
+        try {
+            return getConfigFile().getBoolean("debug", false);
+        } catch (UtilityException e) {
+            getConfigFile().getBoolean("debug", false);
+            serverConfig.setComments("debug", "Set true to enable Debuging for all reporting on this server");
+            getConfigFile().save();
+            return getConfigFile().getBoolean("debug");
         }
     }
 
@@ -384,17 +329,9 @@ public class Metrics {
      */
     public void enable() throws IOException {
         // This has to be synchronized or it can collide with the check in the task.
-        synchronized (optOutLock) {
-            // Check if the server owner has already set opt-out, if not, set it.
-            if (isOptOut()) {
-                properties.setProperty("opt-out", "false");
-                properties.store(new FileOutputStream(configurationFile), "http://mcstats.org");
-            }
-
-            // Enable Task, if it is not running
-            if (thread == null) {
-                start();
-            }
+        // Enable Task, if it is not running
+        if (thread == null) {
+            start();
         }
     }
 
@@ -404,19 +341,10 @@ public class Metrics {
      * @throws java.io.IOException
      */
     public void disable() throws IOException {
-        // This has to be synchronized or it can collide with the check in the task.
-        synchronized (optOutLock) {
-            // Check if the server owner has already set opt-out, if not, set it.
-            if (!isOptOut()) {
-                properties.setProperty("opt-out", "true");
-                properties.store(new FileOutputStream(configurationFile), "http://mcstats.org");
-            }
-
-            // Disable Task, if it is running
-            if (thread != null) {
-                thread.interrupt();
-                thread = null;
-            }
+        // Disable Task, if it is running
+        if (thread != null) {
+            thread.interrupt();
+            thread = null;
         }
     }
 
@@ -425,16 +353,11 @@ public class Metrics {
      *
      * @return the File object for the config file
      */
-    public File getConfigFile() {
-        // I believe the easiest way to get the base folder (e.g craftbukkit set via -P) for plugins to use
-        // is to abuse the plugin object we already have
-        // plugin.getDataFolder() => base/plugins/PluginA/
-        // pluginsFolder => base/plugins/
-        // The base is not necessarily relative to the startup directory.
-        File pluginsFolder = new File("plugins");
-
-        // return => base/plugins/PluginMetrics/config.yml
-        return new File(new File(pluginsFolder, "PluginMetrics"), "config.txt");
+    public PropertiesFile getConfigFile() {
+        if (properties != null) {
+            return properties;
+        }
+        return Configuration.getPluginConfig(plugin, "Metrics");
     }
 
     /**
@@ -451,7 +374,7 @@ public class Metrics {
         json.append('{');
 
         // The plugin's description file containg all of the plugin data such as name, version, author, etc
-        appendJSONPair(json, "guid", guid);
+        appendJSONPair(json, "guid", getGUID());
         appendJSONPair(json, "plugin_version", pluginVersion);
         appendJSONPair(json, "server_version", serverVersion);
         appendJSONPair(json, "players_online", Integer.toString(playersOnline));
@@ -491,11 +414,7 @@ public class Metrics {
 
                 boolean firstGraph = true;
 
-                final Iterator<Graph> iter = graphs.iterator();
-
-                while (iter.hasNext()) {
-                    Graph graph = iter.next();
-
+                for (Graph graph : graphs) {
                     StringBuilder graphJson = new StringBuilder();
                     graphJson.append('{');
 
@@ -551,7 +470,7 @@ public class Metrics {
 
         connection.setDoOutput(true);
 
-        if (debug) {
+        if (isDebug()) {
             System.out.println("[Metrics] Prepared request for " + pluginName + " uncompressed=" + uncompressed.length + " compressed=" + compressed.length);
         }
 
@@ -580,11 +499,7 @@ public class Metrics {
             // Is this the first update this hour?
             if (response.equals("1") || response.contains("This is your first update this hour")) {
                 synchronized (graphs) {
-                    final Iterator<Graph> iter = graphs.iterator();
-
-                    while (iter.hasNext()) {
-                        final Graph graph = iter.next();
-
+                    for (Graph graph : graphs) {
                         for (Plotter plotter : graph.getPlotters()) {
                             plotter.reset();
                         }
@@ -701,7 +616,7 @@ public class Metrics {
                 default:
                     if (chr < ' ') {
                         String t = "000" + Integer.toHexString(chr);
-                        builder.append("\\u" + t.substring(t.length() - 4));
+                        builder.append("\\u").append(t.substring(t.length() - 4));
                     } else {
                         builder.append(chr);
                     }
@@ -795,7 +710,7 @@ public class Metrics {
         }
 
         /**
-         * Called when the server owner decides to opt-out of BukkitMetrics while the server is running.
+         * Called when the server owner decides to opt-out of Metrics while the server is running.
          */
         protected void onOptOut() {
         }

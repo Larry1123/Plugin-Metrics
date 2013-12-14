@@ -18,13 +18,18 @@
             <id>MCStats</id>
             <url>http://repo.mcstats.org/content/groups/public/</url>
         </repository>
+        <repository>
+            <id>Repo1123</id>
+            <name>Larry1123's Repo</name>
+            <url>http://ci.larry1123.net/plugin/repository/everything</url>
+        </repository>
     </repositories>
 
     <dependencies>
         <dependency>
             <groupId>net.canarymod</groupId>
-            <artifactId>canarymod</artifactId>
-            <version>5.5.11-SNAPSHOT</version>
+            <artifactId>CanaryLib</artifactId>
+            <version>1.0-RC-4-SNAPSHOT</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>

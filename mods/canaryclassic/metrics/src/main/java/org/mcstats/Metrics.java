@@ -27,20 +27,31 @@
  */
 package org.mcstats;
 
-import net.canarymod.Canary;
-import net.canarymod.config.Configuration;
-import net.canarymod.plugin.Plugin;
-import net.visualillusionsent.utils.PropertiesFile;
-
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.lang.reflect.Method;
 import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLEncoder;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 import java.util.zip.GZIPOutputStream;
 
-public class MetricsLite {
+public class Metrics {
 
     /**
      * The current revision number
@@ -63,31 +74,19 @@ public class MetricsLite {
     private static final int PING_INTERVAL = 15;
 
     /**
-     * Config for Server settings
+     * Debug mode
      */
-    private static final PropertiesFile serverConfig = new PropertiesFile("config" + File.separatorChar + "Metrics" + File.separatorChar + "Metrics.cfg");
-
-    static {
-        serverConfig.getString("guid", UUID.randomUUID().toString());
-        serverConfig.getBoolean("opt-out", false);
-        serverConfig.setComments("opt-out", "Set true to stop all Metrics reporting for this server");
-        serverConfig.getBoolean("debug", false);
-        serverConfig.setComments("debug", "Set true to enable Debuging for all reporting on this server");
-        serverConfig.clearHeader();
-        serverConfig.addHeaderLines("Metrics Server Config", "Effects all Metrics loggers");
-        serverConfig.save();
-    }
+    private final boolean debug;
 
     /**
-     * The Plugin object
+     * All of the custom graphs to submit to metrics
      */
-    private final Plugin plugin;
+    private final Set<Graph> graphs = Collections.synchronizedSet(new HashSet<Graph>());
 
     /**
      * The plugin configuration file
-     * Holds optOut info and debug info
      */
-    private final PropertiesFile properties;
+    private final Properties properties = new Properties();
 
     /**
      * The plugin's name
@@ -100,6 +99,16 @@ public class MetricsLite {
     private final String pluginVersion;
 
     /**
+     * The plugin configuration file
+     */
+    private final File configurationFile;
+
+    /**
+     * Unique server id
+     */
+    private final String guid;
+
+    /**
      * Lock for synchronization
      */
     private final Object optOutLock = new Object();
@@ -109,29 +118,109 @@ public class MetricsLite {
      */
     private Thread thread = null;
 
-    public String getGUID() {
-        serverConfig.reload();
-        return serverConfig.getString("guid", UUID.randomUUID().toString());
-    }
+    /**
+     * The etc instance
+     */
+    private Object etc = null;
 
-    public MetricsLite(Plugin plugin) throws IOException {
-        if (plugin == null) {
+    /**
+     * The server instance
+     */
+    private Object server = null;
+
+    /**
+     * etc.getInstance().isCrow()
+     */
+    private Method isCrow = null;
+
+    /**
+     * etc.getInstance().getVersionStr()
+     */
+    private Method getVersionStr = null;
+
+    /**
+     * etc.getServer().getMCVersion()
+     */
+    private Method getMCVersion = null;
+
+    /**
+     * etc.getServer().getPlayerList()
+     */
+    private Method getPlayerList = null;
+
+    public Metrics(String pluginName, String pluginVersion) throws IOException {
+        if (pluginName == null || pluginVersion == null) {
             throw new IllegalArgumentException("Plugin cannot be null");
         }
 
-        this.plugin = plugin;
-        pluginName = plugin.getName();
-        pluginVersion = plugin.getVersion();
+        this.pluginName = pluginName;
+        this.pluginVersion = pluginVersion;
 
-        properties = getConfigFile();
+        configurationFile = getConfigFile();
 
-        properties.getBoolean("opt-out", false);
-        properties.setComments("opt-out", "Set true to stop Metrics from reporting for " + pluginName);
-        properties.getBoolean("debug", false);
-        properties.setComments("debug", "Set true to enable Debuging for reporting on " + pluginName);
-        properties.clearHeader();
-        properties.addHeaderLines("Metrics Plugin Config", "Effects Metrics logging for " + pluginName + " only");
-        properties.save();
+        if (!configurationFile.exists()) {
+            if (configurationFile.getPath().contains("/") || configurationFile.getPath().contains("\\")) {
+                File parent = new File(configurationFile.getParent());
+                if (!parent.exists()) {
+                    parent.mkdir();
+                }
+            }
+
+            configurationFile.createNewFile(); // config file
+            properties.put("opt-out", "false");
+            properties.put("guid", UUID.randomUUID().toString());
+            properties.put("debug", "false");
+            properties.store(new FileOutputStream(configurationFile), "http://mcstats.org");
+        } else {
+            properties.load(new FileInputStream(configurationFile));
+        }
+
+        guid = properties.getProperty("guid");
+        debug = Boolean.parseBoolean(properties.getProperty("debug"));
+
+        // load Canary related items
+        try {
+            Class<?> etcClazz = Class.forName("etc");
+            Method method = etcClazz.getMethod("getInstance");
+            etc = method.invoke(null);
+            method = etcClazz.getMethod("getServer");
+            server = method.invoke(null);
+
+            isCrow = etcClazz.getDeclaredMethod("isCrow");
+            getVersionStr = etcClazz.getDeclaredMethod("getVersionStr");
+            getMCVersion = server.getClass().getDeclaredMethod("getMCVersion");
+            getPlayerList = server.getClass().getDeclaredMethod("getPlayerList");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Call a method on the etc instance and ignore any thrown exceptions
+     *
+     * @param method
+     * @return
+     */
+    private String callEtc(Method method) {
+        try {
+            return (String) method.invoke(etc);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Call a method on the server instance and ignore any thrown exceptions
+     *
+     * @param method
+     * @return
+     */
+    private String callServer(Method method) {
+        try {
+            return (String) method.invoke(server);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -140,7 +229,7 @@ public class MetricsLite {
      * @return
      */
     public String getFullServerVersion() {
-        return Canary.getServer().getCanaryModVersion() + " (MC: " + Canary.getServer().getServerVersion() + ")";
+        return (Boolean.parseBoolean(callEtc(isCrow)) ? "Crow" : "Canary") + " " + callEtc(getVersionStr) + " (MC: " + callServer(getMCVersion) + ")";
     }
 
     /**
@@ -149,7 +238,49 @@ public class MetricsLite {
      * @return
      */
     public int getPlayersOnline() {
-        return Canary.getServer().getNumPlayersOnline();
+        List playerList = null;
+        try {
+            playerList = (List) getPlayerList.invoke(server);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return playerList != null ? playerList.size() : 0;
+    }
+
+    /**
+     * Construct and create a Graph that can be used to separate specific plotters to their own graphs on the metrics
+     * website. Plotters can be added to the graph object returned.
+     *
+     * @param name The name of the graph
+     * @return Graph object created. Will never return NULL under normal circumstances unless bad parameters are given
+     */
+    public Graph createGraph(final String name) {
+        if (name == null) {
+            throw new IllegalArgumentException("Graph name cannot be null");
+        }
+
+        // Construct the graph object
+        final Graph graph = new Graph(name);
+
+        // Now we can add our graph
+        graphs.add(graph);
+
+        // and return back
+        return graph;
+    }
+
+    /**
+     * Add a Graph object to SpoutMetrics that represents data for the plugin that should be sent to the backend
+     *
+     * @param graph The name of the graph
+     */
+    public void addGraph(final Graph graph) {
+        if (graph == null) {
+            throw new IllegalArgumentException("Graph cannot be null");
+        }
+
+        graphs.add(graph);
     }
 
     /**
@@ -187,6 +318,10 @@ public class MetricsLite {
                                     if (isOptOut() && thread != null) {
                                         Thread temp = thread;
                                         thread = null;
+                                        // Tell all plotters to stop gathering information.
+                                        for (Graph graph : graphs) {
+                                            graph.onOptOut();
+                                        }
                                         temp.interrupt(); // interrupting ourselves
                                         return;
                                     }
@@ -202,7 +337,7 @@ public class MetricsLite {
                                 firstPost = false;
                                 nextPost = System.currentTimeMillis() + (PING_INTERVAL * 60 * 1000);
                             } catch (IOException e) {
-                                if (isDebug()) {
+                                if (debug) {
                                     System.out.println("[Metrics] " + e.getMessage());
                                 }
                             }
@@ -228,27 +363,18 @@ public class MetricsLite {
      */
     public boolean isOptOut() {
         synchronized (optOutLock) {
-            serverConfig.reload();
-            if (serverConfig.getBoolean("opt-out", false)) {
+            try {
+                // Reload the metrics file
+                properties.load(new FileInputStream(configurationFile));
+            } catch (IOException ex) {
+                if (debug) {
+                    System.out.println("[Metrics] " + ex.getMessage());
+                }
                 return true;
             }
-            getConfigFile().reload();
-            return getConfigFile().getBoolean("opt-out", false);
-        }
-    }
 
-    /**
-     * Checks to see if Debuging is on for this plugin or for the whole server
-     *
-     * @return true if metrics should be running debug code
-     */
-    public boolean isDebug() {
-        serverConfig.reload();
-        if (serverConfig.getBoolean("debug", false)) {
-            return true;
+            return Boolean.parseBoolean(properties.getProperty("opt-out"));
         }
-        getConfigFile().reload();
-        return getConfigFile().getBoolean("debug", false);
     }
 
     /**
@@ -257,9 +383,18 @@ public class MetricsLite {
      * @throws java.io.IOException
      */
     public void enable() throws IOException {
-        // Enable Task, if it is not running
-        if (thread == null) {
-            start();
+        // This has to be synchronized or it can collide with the check in the task.
+        synchronized (optOutLock) {
+            // Check if the server owner has already set opt-out, if not, set it.
+            if (isOptOut()) {
+                properties.setProperty("opt-out", "false");
+                properties.store(new FileOutputStream(configurationFile), "http://mcstats.org");
+            }
+
+            // Enable Task, if it is not running
+            if (thread == null) {
+                start();
+            }
         }
     }
 
@@ -269,10 +404,19 @@ public class MetricsLite {
      * @throws java.io.IOException
      */
     public void disable() throws IOException {
-        // Disable Task, if it is running
-        if (thread != null) {
-            thread.interrupt();
-            thread = null;
+        // This has to be synchronized or it can collide with the check in the task.
+        synchronized (optOutLock) {
+            // Check if the server owner has already set opt-out, if not, set it.
+            if (!isOptOut()) {
+                properties.setProperty("opt-out", "true");
+                properties.store(new FileOutputStream(configurationFile), "http://mcstats.org");
+            }
+
+            // Disable Task, if it is running
+            if (thread != null) {
+                thread.interrupt();
+                thread = null;
+            }
         }
     }
 
@@ -281,11 +425,16 @@ public class MetricsLite {
      *
      * @return the File object for the config file
      */
-    public PropertiesFile getConfigFile() {
-        if (properties != null) {
-            return properties;
-        }
-        return Configuration.getPluginConfig(plugin, "Metrics");
+    public File getConfigFile() {
+        // I believe the easiest way to get the base folder (e.g craftbukkit set via -P) for plugins to use
+        // is to abuse the plugin object we already have
+        // plugin.getDataFolder() => base/plugins/PluginA/
+        // pluginsFolder => base/plugins/
+        // The base is not necessarily relative to the startup directory.
+        File pluginsFolder = new File("plugins");
+
+        // return => base/plugins/PluginMetrics/config.yml
+        return new File(new File(pluginsFolder, "PluginMetrics"), "config.txt");
     }
 
     /**
@@ -302,7 +451,7 @@ public class MetricsLite {
         json.append('{');
 
         // The plugin's description file containg all of the plugin data such as name, version, author, etc
-        appendJSONPair(json, "guid", getGUID());
+        appendJSONPair(json, "guid", guid);
         appendJSONPair(json, "plugin_version", pluginVersion);
         appendJSONPair(json, "server_version", serverVersion);
         appendJSONPair(json, "players_online", Integer.toString(playersOnline));
@@ -329,6 +478,46 @@ public class MetricsLite {
         // If we're pinging, append it
         if (isPing) {
             appendJSONPair(json, "ping", "1");
+        }
+
+        if (graphs.size() > 0) {
+            synchronized (graphs) {
+                json.append(',');
+                json.append('"');
+                json.append("graphs");
+                json.append('"');
+                json.append(':');
+                json.append('{');
+
+                boolean firstGraph = true;
+
+                final Iterator<Graph> iter = graphs.iterator();
+
+                while (iter.hasNext()) {
+                    Graph graph = iter.next();
+
+                    StringBuilder graphJson = new StringBuilder();
+                    graphJson.append('{');
+
+                    for (Plotter plotter : graph.getPlotters()) {
+                        appendJSONPair(graphJson, plotter.getColumnName(), Integer.toString(plotter.getValue()));
+                    }
+
+                    graphJson.append('}');
+
+                    if (!firstGraph) {
+                        json.append(',');
+                    }
+
+                    json.append(escapeJSON(graph.getName()));
+                    json.append(':');
+                    json.append(graphJson);
+
+                    firstGraph = false;
+                }
+
+                json.append('}');
+            }
         }
 
         // close json
@@ -362,7 +551,7 @@ public class MetricsLite {
 
         connection.setDoOutput(true);
 
-        if (isDebug()) {
+        if (debug) {
             System.out.println("[Metrics] Prepared request for " + pluginName + " uncompressed=" + uncompressed.length + " compressed=" + compressed.length);
         }
 
@@ -387,6 +576,21 @@ public class MetricsLite {
             }
 
             throw new IOException(response);
+        } else {
+            // Is this the first update this hour?
+            if (response.equals("1") || response.contains("This is your first update this hour")) {
+                synchronized (graphs) {
+                    final Iterator<Graph> iter = graphs.iterator();
+
+                    while (iter.hasNext()) {
+                        final Graph graph = iter.next();
+
+                        for (Plotter plotter : graph.getPlotters()) {
+                            plotter.reset();
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -519,4 +723,147 @@ public class MetricsLite {
         return URLEncoder.encode(text, "UTF-8");
     }
 
+    /**
+     * Represents a custom graph on the website
+     */
+    public static class Graph {
+
+        /**
+         * The graph's name, alphanumeric and spaces only :) If it does not comply to the above when submitted, it is
+         * rejected
+         */
+        private final String name;
+
+        /**
+         * The set of plotters that are contained within this graph
+         */
+        private final Set<Plotter> plotters = new LinkedHashSet<Plotter>();
+
+        private Graph(final String name) {
+            this.name = name;
+        }
+
+        /**
+         * Gets the graph's name
+         *
+         * @return the Graph's name
+         */
+        public String getName() {
+            return name;
+        }
+
+        /**
+         * Add a plotter to the graph, which will be used to plot entries
+         *
+         * @param plotter the plotter to add to the graph
+         */
+        public void addPlotter(final Plotter plotter) {
+            plotters.add(plotter);
+        }
+
+        /**
+         * Remove a plotter from the graph
+         *
+         * @param plotter the plotter to remove from the graph
+         */
+        public void removePlotter(final Plotter plotter) {
+            plotters.remove(plotter);
+        }
+
+        /**
+         * Gets an <b>unmodifiable</b> set of the plotter objects in the graph
+         *
+         * @return an unmodifiable {@link java.util.Set} of the plotter objects
+         */
+        public Set<Plotter> getPlotters() {
+            return Collections.unmodifiableSet(plotters);
+        }
+
+        @Override
+        public int hashCode() {
+            return name.hashCode();
+        }
+
+        @Override
+        public boolean equals(final Object object) {
+            if (!(object instanceof Graph)) {
+                return false;
+            }
+
+            final Graph graph = (Graph) object;
+            return graph.name.equals(name);
+        }
+
+        /**
+         * Called when the server owner decides to opt-out of BukkitMetrics while the server is running.
+         */
+        protected void onOptOut() {
+        }
+    }
+
+    /**
+     * Interface used to collect custom data for a plugin
+     */
+    public static abstract class Plotter {
+
+        /**
+         * The plot's name
+         */
+        private final String name;
+
+        /**
+         * Construct a plotter with the default plot name
+         */
+        public Plotter() {
+            this("Default");
+        }
+
+        /**
+         * Construct a plotter with a specific plot name
+         *
+         * @param name the name of the plotter to use, which will show up on the website
+         */
+        public Plotter(final String name) {
+            this.name = name;
+        }
+
+        /**
+         * Get the current value for the plotted point. Since this function defers to an external function it may or may
+         * not return immediately thus cannot be guaranteed to be thread friendly or safe. This function can be called
+         * from any thread so care should be taken when accessing resources that need to be synchronized.
+         *
+         * @return the current value for the point to be plotted.
+         */
+        public abstract int getValue();
+
+        /**
+         * Get the column name for the plotted point
+         *
+         * @return the plotted point's column name
+         */
+        public String getColumnName() {
+            return name;
+        }
+
+        /**
+         * Called after the website graphs have been updated
+         */
+        public void reset() {
+        }
+
+        @Override
+        public int hashCode() {
+            return getColumnName().hashCode();
+        }
+
+        @Override
+        public boolean equals(final Object object) {
+            if (!(object instanceof Plotter)) {
+                return false;
+            }
+
+            final Plotter plotter = (Plotter) object;
+            return plotter.name.equals(name) && plotter.getValue() == getValue();
+        }
+    }
 }
