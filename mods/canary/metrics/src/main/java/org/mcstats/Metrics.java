@@ -29,6 +29,7 @@ package org.mcstats;
 
 import net.canarymod.Canary;
 import net.canarymod.config.Configuration;
+import net.canarymod.logger.Logman;
 import net.canarymod.plugin.Plugin;
 import net.visualillusionsent.utils.PropertiesFile;
 import net.visualillusionsent.utils.UtilityException;
@@ -121,7 +122,7 @@ public class Metrics {
             return serverConfig.getString("guid");
         } catch (UtilityException e) {
             if (isDebug()) {
-                Canary.logStacktrace(e.getMessage(), e);
+                Logman.getLogman("Metrics").trace(e.getMessage(), e);
             }
             serverConfig.getString("guid", UUID.randomUUID().toString());
             serverConfig.save();
@@ -291,7 +292,7 @@ public class Metrics {
                 return getConfigFile().getBoolean("opt-out");
             } catch (UtilityException e) {
                 if (isDebug()) {
-                    Canary.logStacktrace(e.getMessage(), e);
+                    Logman.getLogman("Metrics").trace(e.getMessage(), e);
                 }
                 getConfigFile().getBoolean("opt-out", false);
                 serverConfig.setComments("opt-out", "Set true to stop all Metrics reporting for this server");
